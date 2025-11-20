@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "Chat Auto n8n"
     sqlite_db_path: Path = PROJECT_ROOT / "chat.db"
     n8n_webhook_url: Optional[str] = None
+    n8n_callback_token: Optional[str] = None
     request_timeout: float = 15.0
     frontend_origin: str = "http://localhost:5173"
     jwt_secret_key: str = "change-me"

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String
@@ -29,4 +31,22 @@ class Message(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
 
     user: Mapped[User] = relationship("User", back_populates="messages")
+
+
+class PendingReply(Base):
+    __tablename__ = "pending_replies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"), nullable=False, unique=True)
+    bot_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    user: Mapped[User] = relationship("User")
+    user_message: Mapped[Message] = relationship("Message", foreign_keys=[user_message_id])
+    bot_message: Mapped[Message | None] = relationship("Message", foreign_keys=[bot_message_id])
 

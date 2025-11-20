@@ -50,3 +50,62 @@ def list_messages(session: Session, user: models.User, limit: int = 50) -> list[
     # Retourner dans l’ordre chronologique
     return list(reversed(rows))
 
+
+def delete_message(session: Session, message: models.Message) -> None:
+    session.delete(message)
+    session.commit()
+
+
+def get_pending_reply_by_user(session: Session, user: models.User, *, only_pending: bool = True) -> models.PendingReply | None:
+    stmt = select(models.PendingReply).where(models.PendingReply.user_id == user.id)
+    if only_pending:
+        stmt = stmt.where(models.PendingReply.status == "pending")
+    stmt = stmt.order_by(models.PendingReply.created_at.desc())
+    return session.execute(stmt).scalars().first()
+
+
+def get_pending_reply_by_id(
+    session: Session, pending_id: int, user: models.User | None = None
+) -> models.PendingReply | None:
+    stmt = select(models.PendingReply).where(models.PendingReply.id == pending_id)
+    if user:
+        stmt = stmt.where(models.PendingReply.user_id == user.id)
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def create_pending_reply(session: Session, user: models.User, user_message: models.Message) -> models.PendingReply:
+    pending = models.PendingReply(user=user, user_message=user_message, status="pending")
+    session.add(pending)
+    session.commit()
+    session.refresh(pending)
+    return pending
+
+
+def complete_pending_reply(
+    session: Session, pending: models.PendingReply, bot_message: models.Message, status: str = "completed"
+) -> models.PendingReply:
+    pending.bot_message_id = bot_message.id
+    pending.status = status
+    session.add(pending)
+    session.commit()
+    session.refresh(pending)
+    return pending
+
+
+def fail_pending_reply(session: Session, pending: models.PendingReply) -> models.PendingReply:
+    pending.status = "failed"
+    session.add(pending)
+    session.commit()
+    session.refresh(pending)
+    return pending
+
+
+def delete_pending_reply(session: Session, pending: models.PendingReply) -> None:
+    session.delete(pending)
+    session.commit()
+
+
+def get_pending_reply_by_message_id(session: Session, message_id: int) -> models.PendingReply | None:
+    stmt = select(models.PendingReply).where(models.PendingReply.user_message_id == message_id)
+    return session.execute(stmt).scalar_one_or_none()
+

@@ -19,10 +19,16 @@ export interface ChatPayload {
   user_id: number
 }
 
-export interface ChatPair {
+export interface ChatQueuedResponse {
   user: Message
-  bot: Message
-  raw_webhook_response?: Record<string, unknown>
+  pending_reply_id: number
+}
+
+export interface PendingStatus {
+  id: number
+  status: 'pending' | 'completed' | 'failed'
+  user: Message
+  bot?: Message
 }
 
 export interface TokenPair {

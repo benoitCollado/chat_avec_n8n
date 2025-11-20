@@ -1,12 +1,12 @@
 import type { LoginPayload, RegisterPayload, TokenPair, User } from '../types'
 import { ApiError } from './chatApi'
 
-const DEFAULT_BASE_URL = 'http://localhost:8000'
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 export class AuthApi {
   private readonly baseUrl: string
 
-  constructor(baseUrl: string = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL) {
+  constructor(baseUrl: string = DEFAULT_BASE_URL) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
   }
 

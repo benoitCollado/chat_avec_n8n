@@ -1,6 +1,6 @@
-import type { ChatPayload, ChatPair, Message } from '../types'
+import type { ChatPayload, ChatQueuedResponse, Message, PendingStatus } from '../types'
 
-const DEFAULT_BASE_URL = 'http://localhost:8000'
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 export class ApiError extends Error {
   status: number
@@ -14,7 +14,7 @@ export class ApiError extends Error {
 export class ChatApi {
   private readonly baseUrl: string
 
-  constructor(baseUrl: string = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL) {
+  constructor(baseUrl: string = DEFAULT_BASE_URL) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
   }
 
@@ -46,10 +46,25 @@ export class ChatApi {
     return data.messages
   }
 
-  async sendMessage(payload: ChatPayload, token?: string): Promise<ChatPair> {
-    return this.request<ChatPair>('/api/chat', {
+  async sendMessage(payload: ChatPayload, token?: string): Promise<ChatQueuedResponse> {
+    return this.request<ChatQueuedResponse>('/api/chat', {
       method: 'POST',
       body: payload,
+      token,
+    })
+  }
+
+  async getPending(token?: string): Promise<PendingStatus> {
+    return this.request<PendingStatus>('/api/chat/pending', { token })
+  }
+
+  async getPendingStatus(pendingId: number, token?: string): Promise<PendingStatus> {
+    return this.request<PendingStatus>(`/api/chat/pending/${pendingId}`, { token })
+  }
+
+  async failPending(pendingId: number, token?: string): Promise<PendingStatus> {
+    return this.request<PendingStatus>(`/api/chat/pending/${pendingId}/fail`, {
+      method: 'POST',
       token,
     })
   }

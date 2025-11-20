@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -57,12 +57,24 @@ class ChatRequest(BaseModel):
     user_id: int
 
 
-class ChatResponse(BaseModel):
-    user: MessageOut
-    bot: MessageOut
-    raw_webhook_response: Optional[dict] = None
-
-
 class HistoryResponse(BaseModel):
     messages: List[MessageOut]
+
+
+class PendingStatusResponse(BaseModel):
+    id: int
+    status: Literal["pending", "completed", "failed"]
+    user: MessageOut
+    bot: Optional[MessageOut] = None
+
+
+class ChatQueuedResponse(BaseModel):
+    user: MessageOut
+    pending_reply_id: int
+
+
+class N8nCallbackPayload(BaseModel):
+    message_id: int = Field(..., description="Identifiant du message utilisateur d’origine.")
+    reply: str = Field(..., description="Texte retourné par n8n.")
+    author: str | None = Field(default="n8n", description="Auteur à afficher pour la réponse.")
 

@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { AuthApi } from './services/authApi'
 import { ApiError, ChatApi } from './services/chatApi'
-import type { Message, TokenPair, User } from './types'
+import type { Message, PendingStatus, TokenPair, User } from './types'
+
+// Configuration de marked pour le rendu markdown
+marked.setOptions({
+  breaks: true, // Convertit les sauts de ligne en <br>
+  gfm: true, // Active GitHub Flavored Markdown
+})
 
 const authApi = new AuthApi()
 const chatApi = new ChatApi()
@@ -11,6 +19,10 @@ const messages = ref<Message[]>([])
 const loadingHistory = ref(false)
 const sending = ref(false)
 const errorMessage = ref<string | null>(null)
+const pendingReplyId = ref<number | null>(null)
+let pendingInterval: number | null = null
+let pendingTimeout: number | null = null
+const PENDING_TIMEOUT_MS = 60000 // 60 secondes
 
 const accessToken = ref<string | null>(localStorage.getItem('accessToken'))
 const refreshToken = ref<string | null>(localStorage.getItem('refreshToken'))
@@ -30,6 +42,7 @@ const chatForm = reactive({
 })
 
 const isAuthenticated = computed(() => Boolean(accessToken.value && currentUser.value))
+const composerDisabled = computed(() => sending.value || pendingReplyId.value !== null)
 
 const persistSession = (tokens: TokenPair) => {
   accessToken.value = tokens.access_token
@@ -44,6 +57,8 @@ const clearSession = () => {
   refreshToken.value = null
   currentUser.value = null
   messages.value = []
+  pendingReplyId.value = null
+  stopPendingPolling()
   localStorage.removeItem('accessToken')
   localStorage.removeItem('refreshToken')
 }
@@ -113,10 +128,93 @@ const loadHistory = async () => {
   } finally {
     loadingHistory.value = false
   }
+  await resumePendingIfNeeded()
+}
+
+const stopPendingPolling = () => {
+  if (pendingInterval !== null) {
+    clearInterval(pendingInterval)
+    pendingInterval = null
+  }
+  if (pendingTimeout !== null) {
+    clearTimeout(pendingTimeout)
+    pendingTimeout = null
+  }
+}
+
+const handlePendingResolution = (status: PendingStatus) => {
+  if (status.status === 'completed' && status.bot) {
+    const alreadyPresent = messages.value.some((message) => message.id === status.bot!.id)
+    if (!alreadyPresent) {
+      messages.value = [...messages.value, status.bot]
+    }
+    pendingReplyId.value = null
+    stopPendingPolling()
+  } else if (status.status === 'failed') {
+    errorMessage.value = "La réponse n'a pas pu être récupérée."
+    pendingReplyId.value = null
+    stopPendingPolling()
+  }
+}
+
+const checkPendingStatus = async (pendingId: number) => {
+  try {
+    const status = await callWithAuth((token) => chatApi.getPendingStatus(pendingId, token))
+    handlePendingResolution(status)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      pendingReplyId.value = null
+      stopPendingPolling()
+    } else {
+      console.error(error)
+    }
+  }
+}
+
+const startPendingPolling = (pendingId: number) => {
+  pendingReplyId.value = pendingId
+  stopPendingPolling()
+  checkPendingStatus(pendingId)
+  pendingInterval = window.setInterval(() => {
+    if (pendingReplyId.value !== null) {
+      void checkPendingStatus(pendingId)
+    }
+  }, 3000)
+  
+  // Timeout après 60 secondes
+  pendingTimeout = window.setTimeout(async () => {
+    if (pendingReplyId.value === pendingId) {
+      // Marquer le pending comme failed côté backend pour permettre un nouvel envoi immédiat
+      try {
+        await callWithAuth((token) => chatApi.failPending(pendingId, token))
+      } catch (error) {
+        console.error('Erreur lors du marquage du pending comme failed:', error)
+      }
+      errorMessage.value = "La réponse n'est pas arrivée à temps. Veuillez réessayer."
+      pendingReplyId.value = null
+      stopPendingPolling()
+    }
+  }, PENDING_TIMEOUT_MS)
+}
+
+const resumePendingIfNeeded = async () => {
+  if (!accessToken.value || pendingReplyId.value !== null) return
+  try {
+    const pending = await callWithAuth((token) => chatApi.getPending(token))
+    if (!messages.value.some((message) => message.id === pending.user.id)) {
+      messages.value = [...messages.value, pending.user]
+    }
+    startPendingPolling(pending.id)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return
+    }
+    console.error(error)
+  }
 }
 
 const sendMessage = async () => {
-  if (!chatForm.content.trim() || !accessToken.value) return
+  if (!chatForm.content.trim() || !accessToken.value || pendingReplyId.value !== null) return
   errorMessage.value = null
   sending.value = true
 
@@ -124,11 +222,26 @@ const sendMessage = async () => {
     const response = await callWithAuth((token) =>
       chatApi.sendMessage({ content: chatForm.content, user_id: currentUser.value!.id }, token),
     )
-    messages.value = [...messages.value, response.user, response.bot]
+    messages.value = [...messages.value, response.user]
     chatForm.content = ''
+    startPendingPolling(response.pending_reply_id)
   } catch (error) {
     console.error(error)
-    errorMessage.value = "L'envoi vers n8n a échoué."
+    if (error instanceof ApiError) {
+      if (error.status === 409) {
+        errorMessage.value = 'Veuillez attendre la réponse précédente avant de renvoyer un message.'
+      } else if (error.status === 502) {
+        // En cas d'erreur 502, le backend a marqué le pending comme failed
+        // On réinitialise pour permettre un nouvel envoi immédiat
+        pendingReplyId.value = null
+        stopPendingPolling()
+        errorMessage.value = "L'envoi vers n8n a échoué. Veuillez réessayer."
+      } else {
+        errorMessage.value = "L'envoi vers n8n a échoué."
+      }
+    } else {
+      errorMessage.value = "L'envoi vers n8n a échoué."
+    }
   } finally {
     sending.value = false
   }
@@ -136,6 +249,16 @@ const sendMessage = async () => {
 
 const logout = () => {
   clearSession()
+}
+
+const renderMarkdown = (content: string): string => {
+  const html = marked(content)
+  // Sanitize et ajouter target="_blank" aux liens pour la sécurité
+  const clean = DOMPurify.sanitize(html, {
+    ADD_ATTR: ['target'],
+  })
+  // Ajouter target="_blank" et rel="noopener" aux liens
+  return clean.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=')
 }
 
 const formatDate = (value: string) => new Date(value).toLocaleTimeString()
@@ -151,6 +274,10 @@ onMounted(async () => {
       await refreshSession()
     }
   }
+})
+
+onUnmounted(() => {
+  stopPendingPolling()
 })
 </script>
 
@@ -207,7 +334,8 @@ onMounted(async () => {
               <span class="author">{{ message.author }}</span>
               <time>{{ formatDate(message.created_at) }}</time>
             </div>
-            <p>{{ message.content }}</p>
+            <div v-if="message.direction === 'n8n'" class="message-content" v-html="renderMarkdown(message.content)"></div>
+            <p v-else>{{ message.content }}</p>
           </article>
         </div>
 
@@ -221,12 +349,15 @@ onMounted(async () => {
               v-model="chatForm.content"
               rows="3"
               placeholder="Posez votre question à n8n…"
-              :disabled="sending"
+              :disabled="composerDisabled"
             ></textarea>
           </label>
-          <button type="submit" :disabled="sending || !chatForm.content.trim()">
-            {{ sending ? 'Envoi…' : 'Envoyer' }}
+          <button type="submit" :disabled="composerDisabled || !chatForm.content.trim()">
+            <span v-if="sending">Envoi…</span>
+            <span v-else-if="pendingReplyId">Réponse en attente…</span>
+            <span v-else>Envoyer</span>
           </button>
+          <p v-if="pendingReplyId" class="info">Veuillez patienter, la réponse arrive…</p>
           <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
         </form>
       </section>

@@ -1,14 +1,28 @@
-import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .config import settings
-from .crud import authenticate_user, create_message, create_user, get_user_by_email, list_messages
+from .crud import (
+    authenticate_user,
+    complete_pending_reply,
+    create_message,
+    create_pending_reply,
+    create_user,
+    delete_message,
+    delete_pending_reply,
+    fail_pending_reply,
+    get_pending_reply_by_id,
+    get_pending_reply_by_message_id,
+    get_pending_reply_by_user,
+    get_user_by_email,
+    list_messages,
+)
 from .database import Base, engine, get_session
 from .security import create_access_token, create_refresh_token, decode_token, get_current_user
 
@@ -99,14 +113,43 @@ def get_messages(
     return schemas.HistoryResponse(messages=[schemas.MessageOut.model_validate(m) for m in messages])
 
 
-@api_router.post("/chat", response_model=schemas.ChatResponse, status_code=status.HTTP_201_CREATED)
+def serialize_pending(pending: models.PendingReply) -> schemas.PendingStatusResponse:
+    return schemas.PendingStatusResponse(
+        id=pending.id,
+        status=pending.status,
+        user=schemas.MessageOut.model_validate(pending.user_message),
+        bot=schemas.MessageOut.model_validate(pending.bot_message) if pending.bot_message else None,
+    )
+
+
+@api_router.post("/chat", response_model=schemas.ChatQueuedResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
     payload: schemas.ChatRequest,
     session: Session = Depends(get_session),
     current_user: models.User = Depends(get_current_user),
-) -> schemas.ChatResponse:
+) -> schemas.ChatQueuedResponse:
     if payload.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur invalide pour ce token.")
+
+    existing_pending = get_pending_reply_by_user(session, current_user, only_pending=False)
+    if existing_pending:
+        # Si le pending est en erreur, on le supprime immédiatement pour permettre un nouvel envoi
+        if existing_pending.status == "failed":
+            delete_pending_reply(session, existing_pending)
+        # Si le pending est plus ancien que 60 secondes, on le supprime pour permettre un nouvel envoi
+        else:
+            now = datetime.now(timezone.utc)
+            # S'assurer que created_at est timezone-aware
+            pending_created_at = existing_pending.created_at
+            if pending_created_at.tzinfo is None:
+                pending_created_at = pending_created_at.replace(tzinfo=timezone.utc)
+            pending_age = now - pending_created_at
+            if pending_age > timedelta(seconds=60):
+                delete_pending_reply(session, existing_pending)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Une réponse est déjà en attente pour cet utilisateur."
+                )
 
     inbound = create_message(
         session,
@@ -116,31 +159,90 @@ async def send_message(
         direction="user",
     )
 
+    pending = create_pending_reply(session, current_user, inbound)
+
     try:
-        webhook_response = await forward_to_n8n(payload.model_dump())
-    except httpx.HTTPError as exc:
+        payload_for_n8n = payload.model_dump()
+        payload_for_n8n["message_id"] = inbound.id
+        payload_for_n8n["pending_reply_id"] = pending.id
+        await forward_to_n8n(payload_for_n8n)
+    except (httpx.HTTPError, HTTPException) as exc:
+        # En cas d'erreur, supprimer immédiatement le pending et le message pour permettre un nouvel envoi
+        delete_pending_reply(session, pending)
+        delete_message(session, inbound)
+        if isinstance(exc, HTTPException):
+            raise exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    reply_text = (
-        webhook_response.get("reply")
-        or webhook_response.get("message")
-        or webhook_response.get("text")
-        or json.dumps(webhook_response)
+    return schemas.ChatQueuedResponse(
+        user=schemas.MessageOut.model_validate(inbound),
+        pending_reply_id=pending.id,
     )
 
-    outbound = create_message(
+
+@api_router.get("/chat/pending/{pending_id}", response_model=schemas.PendingStatusResponse)
+def get_pending_status(
+    pending_id: int,
+    session: Session = Depends(get_session),
+    current_user: models.User = Depends(get_current_user),
+) -> schemas.PendingStatusResponse:
+    pending = get_pending_reply_by_id(session, pending_id, current_user)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Réponse en attente introuvable.")
+    return serialize_pending(pending)
+
+
+@api_router.get("/chat/pending", response_model=schemas.PendingStatusResponse)
+def get_current_pending(
+    session: Session = Depends(get_session),
+    current_user: models.User = Depends(get_current_user),
+) -> schemas.PendingStatusResponse:
+    pending = get_pending_reply_by_user(session, current_user, only_pending=True)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Aucune réponse en attente.")
+    return serialize_pending(pending)
+
+
+@api_router.post("/chat/pending/{pending_id}/fail", response_model=schemas.PendingStatusResponse)
+def fail_pending(
+    pending_id: int,
+    session: Session = Depends(get_session),
+    current_user: models.User = Depends(get_current_user),
+) -> schemas.PendingStatusResponse:
+    pending = get_pending_reply_by_id(session, pending_id, current_user)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Réponse en attente introuvable.")
+    if pending.status != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce message a déjà été traité.")
+    pending = fail_pending_reply(session, pending)
+    return serialize_pending(pending)
+
+
+@api_router.post("/chat/callback", response_model=schemas.PendingStatusResponse)
+def receive_n8n_callback(
+    payload: schemas.N8nCallbackPayload,
+    session: Session = Depends(get_session),
+    callback_token: str | None = Header(default=None, alias="X-Callback-Token"),
+) -> schemas.PendingStatusResponse:
+    if settings.n8n_callback_token and callback_token != settings.n8n_callback_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token de callback invalide.")
+
+    pending = get_pending_reply_by_message_id(session, payload.message_id)
+    if not pending:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message utilisateur introuvable.")
+    if pending.status != "pending":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce message a déjà été traité.")
+
+    bot_message = create_message(
         session,
-        user=current_user,
-        author="n8n",
-        content=reply_text,
+        user=pending.user,
+        author=payload.author or "n8n",
+        content=payload.reply,
         direction="n8n",
     )
 
-    return schemas.ChatResponse(
-        user=schemas.MessageOut.model_validate(inbound),
-        bot=schemas.MessageOut.model_validate(outbound),
-        raw_webhook_response=webhook_response,
-    )
+    pending = complete_pending_reply(session, pending, bot_message)
+    return serialize_pending(pending)
 
 
 app.include_router(api_router)
