@@ -34,19 +34,19 @@ export class AuthApi {
   }
 
   register(payload: RegisterPayload) {
-    return this.request<TokenPair>('/auth/register', { body: payload })
+    return this.request<TokenPair>('/api/auth/register', { body: payload })
   }
 
   login(payload: LoginPayload) {
-    return this.request<TokenPair>('/auth/login', { body: payload })
+    return this.request<TokenPair>('/api/auth/login', { body: payload })
   }
 
   refresh(refreshToken: string) {
-    return this.request<TokenPair>('/auth/refresh', { body: { refresh_token: refreshToken } })
+    return this.request<TokenPair>('/api/auth/refresh', { body: { refresh_token: refreshToken } })
   }
 
   me(accessToken: string) {
-    return this.request<User>('/auth/me', { method: 'GET', token: accessToken })
+    return this.request<User>('/api/auth/me', { method: 'GET', token: accessToken })
   }
 }
 

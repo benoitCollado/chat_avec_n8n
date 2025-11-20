@@ -39,6 +39,8 @@ Identifiez-vous via l’UI : inscription (création utilisateur) ou connexion re
 
 > ⚠️ En cas de changement de schéma (ajout des utilisateurs/messages reliés), supprimez `backend/chat.db` pour repartir sur une base saine.
 
+Toutes les routes FastAPI sont exposées sous le préfixe `/api` (ex. `http://localhost:8000/api/messages`, `/api/chat`, `/api/auth/login`, etc.). Ajustez vos appels externes ou vos workflows n8n en conséquence.
+
 ## Flux
 
 1. L’utilisateur envoie un message depuis l’UI.

@@ -42,12 +42,12 @@ export class ChatApi {
   }
 
   async fetchHistory(limit = 50, token?: string): Promise<Message[]> {
-    const data = await this.request<{ messages: Message[] }>(`/messages?limit=${limit}`, { token })
+    const data = await this.request<{ messages: Message[] }>(`/api/messages?limit=${limit}`, { token })
     return data.messages
   }
 
   async sendMessage(payload: ChatPayload, token?: string): Promise<ChatPair> {
-    return this.request<ChatPair>('/chat', {
+    return this.request<ChatPair>('/api/chat', {
       method: 'POST',
       body: payload,
       token,

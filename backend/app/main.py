@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from .security import create_access_token, create_refresh_token, decode_token, g
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name)
+api_router = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,7 +46,7 @@ async def forward_to_n8n(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"reply": response.text}
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -58,7 +59,7 @@ def issue_tokens(user: models.User) -> schemas.TokenPair:
     )
 
 
-@app.post("/auth/register", response_model=schemas.TokenPair, status_code=status.HTTP_201_CREATED)
+@api_router.post("/auth/register", response_model=schemas.TokenPair, status_code=status.HTTP_201_CREATED)
 def register_user(payload: schemas.UserCreate, session: Session = Depends(get_session)) -> schemas.TokenPair:
     if get_user_by_email(session, payload.email):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cet email est déjà utilisé.")
@@ -66,7 +67,7 @@ def register_user(payload: schemas.UserCreate, session: Session = Depends(get_se
     return issue_tokens(user)
 
 
-@app.post("/auth/login", response_model=schemas.TokenPair)
+@api_router.post("/auth/login", response_model=schemas.TokenPair)
 def login(payload: schemas.UserLogin, session: Session = Depends(get_session)) -> schemas.TokenPair:
     user = authenticate_user(session, payload.email, payload.password)
     if not user:
@@ -74,7 +75,7 @@ def login(payload: schemas.UserLogin, session: Session = Depends(get_session)) -
     return issue_tokens(user)
 
 
-@app.post("/auth/refresh", response_model=schemas.TokenPair)
+@api_router.post("/auth/refresh", response_model=schemas.TokenPair)
 def refresh(payload: schemas.RefreshRequest, session: Session = Depends(get_session)) -> schemas.TokenPair:
     token_data = decode_token(payload.refresh_token, expected_type="refresh")
     user = session.get(models.User, int(token_data["sub"]))
@@ -83,12 +84,12 @@ def refresh(payload: schemas.RefreshRequest, session: Session = Depends(get_sess
     return issue_tokens(user)
 
 
-@app.get("/auth/me", response_model=schemas.UserOut)
+@api_router.get("/auth/me", response_model=schemas.UserOut)
 def me(current_user: models.User = Depends(get_current_user)) -> schemas.UserOut:
     return schemas.UserOut.model_validate(current_user)
 
 
-@app.get("/messages", response_model=schemas.HistoryResponse)
+@api_router.get("/messages", response_model=schemas.HistoryResponse)
 def get_messages(
     limit: int = 50,
     session: Session = Depends(get_session),
@@ -98,7 +99,7 @@ def get_messages(
     return schemas.HistoryResponse(messages=[schemas.MessageOut.model_validate(m) for m in messages])
 
 
-@app.post("/chat", response_model=schemas.ChatResponse, status_code=status.HTTP_201_CREATED)
+@api_router.post("/chat", response_model=schemas.ChatResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
     payload: schemas.ChatRequest,
     session: Session = Depends(get_session),
@@ -140,4 +141,7 @@ async def send_message(
         bot=schemas.MessageOut.model_validate(outbound),
         raw_webhook_response=webhook_response,
     )
+
+
+app.include_router(api_router)
 
