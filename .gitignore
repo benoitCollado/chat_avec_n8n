@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+*.log
+backend/.venv/
+backend/chat.db
+backend/.mypy_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Env & tooling
+.env
+backend/.env
+frontend/.env
+.DS_Store
+
