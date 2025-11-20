@@ -22,6 +22,8 @@ Variables disponibles :
 
 - `N8N_WEBHOOK_URL` – URL complète du webhook n8n attendu.
 - `FRONTEND_ORIGIN` – Origine autorisée pour le CORS (ex. `http://localhost:5173`), séparez par une virgule pour plusieurs valeurs.
+- `JWT_SECRET_KEY` – Clé secrète utilisée pour signer les tokens.
+- `ACCESS_TOKEN_EXP_MINUTES` / `REFRESH_TOKEN_EXP_MINUTES` – Durées de vie des tokens.
 
 ## Démarrage Frontend
 
@@ -32,6 +34,10 @@ npm run dev
 ```
 
 Copiez `env.example` en `.env` si besoin et définissez `VITE_API_BASE_URL` (ex. `http://localhost:8000`) pour pointer vers l’API.
+
+Identifiez-vous via l’UI : inscription (création utilisateur) ou connexion renvoient un couple `access/refresh token`. Les requêtes chat nécessitent un utilisateur authentifié.
+
+> ⚠️ En cas de changement de schéma (ajout des utilisateurs/messages reliés), supprimez `backend/chat.db` pour repartir sur une base saine.
 
 ## Flux
 

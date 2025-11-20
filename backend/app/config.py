@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     n8n_webhook_url: Optional[str] = None
     request_timeout: float = 15.0
     frontend_origin: str = "http://localhost:5173"
+    jwt_secret_key: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_exp_minutes: int = 15
+    refresh_token_exp_minutes: int = 60 * 24 * 7  # 1 semaine
+    bcrypt_rounds: int = 12
 
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", env_file_encoding="utf-8")
 

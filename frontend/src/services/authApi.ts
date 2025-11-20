@@ -1,24 +1,16 @@
-import type { ChatPayload, ChatPair, Message } from '../types'
+import type { LoginPayload, RegisterPayload, TokenPair, User } from '../types'
+import { ApiError } from './chatApi'
 
 const DEFAULT_BASE_URL = 'http://localhost:8000'
 
-export class ApiError extends Error {
-  status: number
-
-  constructor(message: string, status: number) {
-    super(message)
-    this.status = status
-  }
-}
-
-export class ChatApi {
+export class AuthApi {
   private readonly baseUrl: string
 
   constructor(baseUrl: string = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
   }
 
-  private async request<T>(path: string, options: { method?: string; token?: string; body?: unknown } = {}) {
+  private async request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}) {
     const headers: Record<string, string> = {}
     if (options.body !== undefined) {
       headers['Content-Type'] = 'application/json'
@@ -28,7 +20,7 @@ export class ChatApi {
     }
 
     const response = await fetch(`${this.baseUrl}${path}`, {
-      method: options.method ?? 'GET',
+      method: options.method ?? 'POST',
       headers,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     })
@@ -41,16 +33,20 @@ export class ChatApi {
     return (await response.json()) as T
   }
 
-  async fetchHistory(limit = 50, token?: string): Promise<Message[]> {
-    const data = await this.request<{ messages: Message[] }>(`/messages?limit=${limit}`, { token })
-    return data.messages
+  register(payload: RegisterPayload) {
+    return this.request<TokenPair>('/auth/register', { body: payload })
   }
 
-  async sendMessage(payload: ChatPayload, token?: string): Promise<ChatPair> {
-    return this.request<ChatPair>('/chat', {
-      method: 'POST',
-      body: payload,
-      token,
-    })
+  login(payload: LoginPayload) {
+    return this.request<TokenPair>('/auth/login', { body: payload })
+  }
+
+  refresh(refreshToken: string) {
+    return this.request<TokenPair>('/auth/refresh', { body: { refresh_token: refreshToken } })
+  }
+
+  me(accessToken: string) {
+    return this.request<User>('/auth/me', { method: 'GET', token: accessToken })
   }
 }
+

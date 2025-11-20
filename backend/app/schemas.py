@@ -1,13 +1,47 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+
+
+class UserBase(BaseModel):
+    email: EmailStr
+    full_name: str
+
+
+class UserCreate(UserBase):
+    password: str = Field(min_length=8)
+
+
+class UserOut(UserBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class MessageBase(BaseModel):
-    author: str = Field(..., description="Nom lisible de l’émetteur")
-    content: str = Field(..., description="Contenu textuel du message")
-    direction: str = Field(..., description="user ou n8n")
+    author: str
+    content: str
+    direction: str
+    user_id: int
 
 
 class MessageOut(MessageBase):
@@ -19,8 +53,8 @@ class MessageOut(MessageBase):
 
 
 class ChatRequest(BaseModel):
-    author: str = Field(..., examples=["Utilisateur"])
     content: str = Field(..., examples=["Bonjour n8n"])
+    user_id: int
 
 
 class ChatResponse(BaseModel):
